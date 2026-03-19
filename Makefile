@@ -13,4 +13,4 @@ dev:
 build: lint test
 	go build -o ./bin/$(PROJECT) $(MAIN_FILE)
 
-.PHONY: lint test run
+.PHONY: lint test dev
