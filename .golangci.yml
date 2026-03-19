@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  enable:
+    - exhaustive
+    - exhaustruct
+    - gosec
+    - nilnil
+    - nilerr
+    - contextcheck
+    - gochecknoinits
+    - godox
+    - misspell
+    - sloglint
+
+  settings:
+    sloglint:
+      no-mixed-args: true
+      static-msg: true
+      key-naming-case: camel
+      args-on-sep-lines: true
