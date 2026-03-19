@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,11 +11,13 @@ import (
 	"rain/internal/colors"
 	"syscall"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 /*
 TODO: implement flags.
-
+- dump sample request collection
 - env file path (optional)
 - collection file path (optional)
 - request timeout
@@ -24,16 +27,83 @@ TODO: implement per request based vars. Priority of reading vars
 1st. Request scoped vars.
 2nd. Collection vars.
 3rd. Env.
-
 */
 
 const (
-	DEFAULT_ENV_FILEPATH        string        = ".env"
-	DEFAULT_COLLECTION_FILEPATH string        = "collection.toml"
-	DEFAULT_REQUEST_TIMEOUT     time.Duration = time.Second * 60
+	DEFAULT_ENV_FILEPATH        string = ".env"
+	DEFAULT_COLLECTION_FILEPATH string = "collection.toml"
+	DEFAULT_REQUEST_TIMEOUT     int    = 60
 )
 
-func run() error {
+type CliArgs struct {
+	Dump       *string
+	Env        *string
+	Collection *string
+	Timeout    *time.Duration
+}
+
+func defaultCliArgs() CliArgs {
+	cl := DEFAULT_COLLECTION_FILEPATH
+	tout := time.Second * time.Duration(DEFAULT_REQUEST_TIMEOUT)
+
+	return CliArgs{
+		Dump:       nil,
+		Env:        nil,
+		Collection: &cl,
+		Timeout:    &tout,
+	}
+}
+
+func parseFlags(args []string) CliArgs {
+	dump := flag.String("dump", "", "Dump output to the provided file path")
+	env := flag.String("env", "", "Load provided environment file")
+	coll := flag.String("collection", DEFAULT_COLLECTION_FILEPATH, "Load provided requests collection file")
+	tout := flag.Int("timeout", DEFAULT_REQUEST_TIMEOUT, "Request timeout (seconds)")
+	flag.Parse()
+
+	timeout := time.Second * time.Duration(DEFAULT_REQUEST_TIMEOUT)
+	if tout != nil {
+		timeout = time.Second * time.Duration(*tout)
+	}
+
+	cliArgs := CliArgs{
+		Dump:       dump,
+		Env:        env,
+		Collection: coll,
+		Timeout:    &timeout,
+	}
+
+	if *cliArgs.Dump == "" {
+		cliArgs.Dump = nil
+	}
+
+	if *cliArgs.Env == "" {
+		cliArgs.Env = nil
+	}
+
+	return cliArgs
+}
+
+func run(args []string) error {
+	cliArgs := defaultCliArgs()
+	if len(args) > 0 {
+		if args[1] == "init" {
+			sampleCollection := collection.NewSampleCollection()
+			encoded, err := toml.Marshal(sampleCollection)
+			if err != nil {
+				return fmt.Errorf("failed to encoded sample collection: %w", err)
+			}
+
+			if err := os.WriteFile(DEFAULT_COLLECTION_FILEPATH, encoded, 0644); err != nil {
+				return fmt.Errorf("failed to write sample collection file: %w", err)
+			}
+
+			return nil
+		} else {
+			cliArgs = parseFlags(args)
+		}
+	}
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
@@ -43,7 +113,7 @@ func run() error {
 		os.Exit(0)
 	}()
 
-	openedCollection, err := collection.Load(DEFAULT_COLLECTION_FILEPATH, DEFAULT_ENV_FILEPATH)
+	openedCollection, err := collection.Load(*cliArgs.Collection, *cliArgs.Env)
 	if err != nil {
 		return fmt.Errorf("failed to load collection: %w", err)
 	}
@@ -70,13 +140,12 @@ func run() error {
 	start := time.Now()
 	resp, statusCode, err := selectedRequest.Do(
 		collection.RequestArgs{
-			Timeout: DEFAULT_REQUEST_TIMEOUT,
+			Timeout: *cliArgs.Timeout,
 		},
 	)
 
 	elapsed := time.Since(start)
-	fmt.Print("\033[2J") // Clear screen
-	fmt.Print("\033[H")  // Move cursor home
+	fmt.Print("\033[2J\033[H") // clear screen and move cursor to start.
 	fmt.Printf("%sStatus = %s%d\t%sElapsed = %s%s\n%s", colors.BLACK, colors.YELLOW,
 		statusCode, colors.BLACK, colors.YELLOW, elapsed, colors.RESET)
 
@@ -92,7 +161,8 @@ func run() error {
 }
 
 func main() {
-	if err := run(); err != nil {
+	args := os.Args
+	if err := run(args); err != nil {
 		fmt.Fprintf(os.Stderr, "%serror: %s.%s\n", colors.RED, err.Error(), colors.RESET)
 		os.Exit(1)
 	}

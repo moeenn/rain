@@ -314,6 +314,39 @@ func Load(filepath string, envFilepath string) (*Collection, error) {
 	return &collection, nil
 }
 
+func NewSampleCollection() *Collection {
+	return &Collection{
+		Vars: Vars{
+			"BASE_URL": "https://jsonplaceholder.typicode.com",
+		},
+		Requests: []*RequestEntry{
+			{
+				Name:   "Get todo by id",
+				Url:    "{BASE_URL}/todos/1",
+				Method: http.MethodGet,
+				Headers: RequestHeaders{
+					"Content-Type": "application/json",
+				},
+			},
+			{
+				Name:   "Update todo",
+				Url:    "{BASE_URL}/todos",
+				Method: http.MethodPut,
+				Headers: RequestHeaders{
+					"Content-Type": "application/json",
+				},
+				Query: RequestQuery{
+					"id": 10,
+				},
+				Body: map[string]any{
+					"userId": 20,
+					"title":  "Updated Todo",
+				},
+			},
+		},
+	}
+}
+
 func (c *Collection) ListRequests() []string {
 	requestNames := make([]string, len(c.Requests))
 	for i, r := range c.Requests {
