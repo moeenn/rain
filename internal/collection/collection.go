@@ -1,12 +1,17 @@
 package collection
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
@@ -38,6 +43,30 @@ func (m RequestMethod) validate() error {
 	}
 
 	return nil
+}
+
+func (q RequestQuery) Encode() (string, error) {
+	values := url.Values{}
+	for key, value := range q {
+		switch vt := value.(type) {
+		case string:
+			values.Set(key, vt)
+
+		case int:
+		case int32:
+		case int64:
+		case float32:
+		case float64:
+			c := fmt.Sprintf("%v", vt)
+			values.Set(key, c)
+
+		default:
+			return "", fmt.Errorf("unsupported query value type: %s (type=%T)", key, vt)
+		}
+	}
+
+	result := "?" + values.Encode()
+	return result, nil
 }
 
 type RequestEntry struct {
@@ -79,7 +108,7 @@ func (r *RequestEntry) validateAndParseQuery(vars Vars) error {
 			}
 
 		default:
-			return fmt.Errorf("only int, float and string types are supported for request query values")
+			return fmt.Errorf("unsupported request query value: %s (type=%T)", k, vt)
 		}
 	}
 
@@ -179,6 +208,60 @@ func (r *RequestEntry) validate(vars Vars) error {
 	return nil
 }
 
+type RequestArgs struct {
+	Timeout time.Duration
+}
+
+func (r *RequestEntry) Do(args RequestArgs) ([]byte, int, error) {
+	var body []byte
+	var err error
+	if r.Body != nil {
+		body, err = json.Marshal(r.Body)
+	}
+
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to JSON encode body: %w", err)
+	}
+
+	url := r.Url
+	if r.Query != nil {
+		queryString, err := r.Query.Encode()
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to encode query string: %w", err)
+		}
+		url += queryString
+	}
+
+	req, err := http.NewRequest(string(r.Method), url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if r.Headers != nil {
+		for k, v := range r.Headers {
+			req.Header.Set(k, v)
+		}
+	}
+
+	client := &http.Client{
+		Timeout: args.Timeout,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to complete request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	parsedBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	statusCode := resp.StatusCode
+	return parsedBody, statusCode, nil
+}
+
 type Collection struct {
 	Vars     Vars            `toml:"vars"` // optional.
 	Requests []*RequestEntry `toml:"requests"`
@@ -216,23 +299,6 @@ func Load(filepath string, envFilepath string) (*Collection, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load environment file %q: %w", envFilepath, err)
 		}
-
-		// TODO: remove.
-		// allEnvVars := os.Environ()
-		// for _, v := range allEnvVars {
-		// 	pieces := strings.Split(v, "=")
-		// 	if len(pieces) != 2 {
-		// 		continue
-		// 	}
-
-		// 	key := strings.TrimSpace(pieces[0])
-		// 	value := strings.TrimSpace(pieces[1])
-		// 	if key == "" || value == "" {
-		// 		continue
-		// 	}
-
-		// 	collection.Vars[key] = value
-		// }
 	}
 
 	var collection Collection

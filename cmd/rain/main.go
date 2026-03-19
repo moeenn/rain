@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,11 +9,28 @@ import (
 	"rain/internal/collection"
 	"rain/internal/colors"
 	"syscall"
+	"time"
 )
 
+/*
+TODO: implement flags.
+
+- env file path (optional)
+- collection file path (optional)
+- request timeout
+- dump output to file path (optional)
+
+TODO: implement per request based vars. Priority of reading vars
+1st. Request scoped vars.
+2nd. Collection vars.
+3rd. Env.
+
+*/
+
 const (
-	DEFAULT_ENV_FILEPATH        string = ".env"
-	DEFAULT_COLLECTION_FILEPATH string = "collection.toml"
+	DEFAULT_ENV_FILEPATH        string        = ".env"
+	DEFAULT_COLLECTION_FILEPATH string        = "collection.toml"
+	DEFAULT_REQUEST_TIMEOUT     time.Duration = time.Second * 60
 )
 
 func run() error {
@@ -25,42 +43,57 @@ func run() error {
 		os.Exit(0)
 	}()
 
-	collection, err := collection.Load(DEFAULT_COLLECTION_FILEPATH, DEFAULT_ENV_FILEPATH)
+	openedCollection, err := collection.Load(DEFAULT_COLLECTION_FILEPATH, DEFAULT_ENV_FILEPATH)
 	if err != nil {
 		return fmt.Errorf("failed to load collection: %w", err)
 	}
 
-	/*
-		requests := collection.ListRequests()
-		for {
-			fmt.Printf("%sSelect Request:%s\n", colors.BLUE, colors.RESET)
-			for i, r := range requests {
-				fmt.Printf("%2d. %s\n", i+1, r)
-			}
+	requests := openedCollection.ListRequests()
+	fmt.Printf("%sSelect Request:%s\n", colors.BLUE, colors.RESET)
+	for i, r := range requests {
+		fmt.Printf("%2d. %s\n", i+1, r)
+	}
 
-			var selection int
-			fmt.Printf("\n%sSelection: %s", colors.BLUE, colors.RESET)
-			if _, err := fmt.Scanln(&selection); err != nil {
-				fmt.Printf("%sfailed to read input: %s.%s", colors.RED, err.Error(), colors.RESET)
-				continue
-			}
+	var selection int
+	fmt.Printf("\n%sSelection: %s", colors.BLUE, colors.RESET)
+	if _, err := fmt.Scanln(&selection); err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
 
-			if selection < 1 || selection > len(requests) {
-				fmt.Printf("%sInvalid selection: Please try again.%s\n", colors.RED, colors.RESET)
-				continue
-			}
-		}
-	*/
+	if selection < 1 || selection > len(requests) {
+		return fmt.Errorf("invalid selection")
+	}
 
-	e, _ := json.Marshal(collection)
-	fmt.Printf("%s\n", e)
+	selectedRequest := openedCollection.Requests[selection-1]
+	fmt.Printf("%sSending Request %s", colors.BLUE, colors.RESET)
 
+	start := time.Now()
+	resp, statusCode, err := selectedRequest.Do(
+		collection.RequestArgs{
+			Timeout: DEFAULT_REQUEST_TIMEOUT,
+		},
+	)
+
+	elapsed := time.Since(start)
+	fmt.Print("\033[2J") // Clear screen
+	fmt.Print("\033[H")  // Move cursor home
+	fmt.Printf("%sStatus = %s%d\t%sElapsed = %s%s\n%s", colors.BLACK, colors.YELLOW,
+		statusCode, colors.BLACK, colors.YELLOW, elapsed, colors.RESET)
+
+	var prettyJson bytes.Buffer
+	err = json.Indent(&prettyJson, resp, "", "  ")
+	if err != nil {
+		fmt.Printf("\n%s\n\n", resp)
+		return nil
+	}
+
+	fmt.Printf("\n%s\n\n", prettyJson.String())
 	return nil
 }
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
+		fmt.Fprintf(os.Stderr, "%serror: %s.%s\n", colors.RED, err.Error(), colors.RESET)
 		os.Exit(1)
 	}
 }

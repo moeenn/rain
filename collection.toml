@@ -1,17 +1,18 @@
 [vars]
-BASE_URL = "https://site.com/api/v1"
-LISTING_ID = "ABC13245"
+BASE_URL = "https://connect.uplisting.io"
+LISTING_ID = ""
 
 [[requests]]
-name = "Login"
-url = "{BASE_URL}/auth/login"
-method = "POST"
-query = { limit = 10, offset = 0 }
-headers = { Content-Type = "application/json", Accept = "application/json", Authorization = "Bearer {TOKEN}" }
-body = { email = "admin@site.com", password = "qweqweqwe" }
-
-[[requests]]
-name = "Get Listing"
-url = "{BASE_URL}/auth/listings/{LISTING_ID}"
+name = "Get Properties"
+url = "{BASE_URL}/properties"
 method = "GET"
-headers = { Content-Type = "application/json", Authorization = "Bearer {TOKEN}" }
+# query = { limit = 10, offset = 0 }
+headers = { Content-Type = "application/json", Authorization = "Basic {API_KEY}" }
+# body = { email = "admin@site.com", password = "qweqweqwe" }
+
+[[requests]]
+name = "Get Bookings"
+url = "{BASE_URL}/bookings/{LISTING_ID}"
+method = "GET"
+query = { from = "2020-12-10", to = "2020-12-20" }
+headers = { Content-Type = "application/json", Authorization = "Basic {API_KEY}" }
