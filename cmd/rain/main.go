@@ -3,103 +3,58 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"rain/internal/cli"
 	"rain/internal/collection"
 	"rain/internal/colors"
 	"syscall"
 	"time"
-
-	"github.com/BurntSushi/toml"
 )
 
-const (
-	DEFAULT_ENV_FILEPATH        string = ".env"
-	DEFAULT_COLLECTION_FILEPATH string = "collection.toml"
-	DEFAULT_REQUEST_TIMEOUT     int    = 60
-)
+func performRequest(selectedRequest *collection.RequestEntry, timeout time.Duration) error {
+	fmt.Printf("%sSending Request %s", colors.BLUE, colors.RESET)
 
-type CliArgs struct {
-	Dump       *string
-	Env        *string
-	Collection *string
-	Timeout    *time.Duration
-}
+	start := time.Now()
+	resp, statusCode, err := selectedRequest.Do(
+		collection.RequestArgs{
+			Timeout: timeout,
+		},
+	)
 
-func defaultCliArgs() CliArgs {
-	cl := DEFAULT_COLLECTION_FILEPATH
-	tout := time.Second * time.Duration(DEFAULT_REQUEST_TIMEOUT)
+	elapsed := time.Since(start)
+	fmt.Print("\033[2J\033[H") // clear screen and move cursor to start.
+	fmt.Printf("%sStatus = %s%d\t%sElapsed = %s%s\n%s", colors.BLACK, colors.YELLOW,
+		statusCode, colors.BLACK, colors.YELLOW, elapsed, colors.RESET)
 
-	return CliArgs{
-		Dump:       nil,
-		Env:        nil,
-		Collection: &cl,
-		Timeout:    &tout,
-	}
-}
-
-func parseFlags(args []string) CliArgs {
-	dump := flag.String("dump", "", "Dump output to the provided file path")
-	env := flag.String("env", "", "Load provided environment file")
-	coll := flag.String("collection", DEFAULT_COLLECTION_FILEPATH, "Load provided requests collection file")
-	tout := flag.Int("timeout", DEFAULT_REQUEST_TIMEOUT, "Request timeout (seconds)")
-	flag.Parse()
-
-	timeout := time.Second * time.Duration(DEFAULT_REQUEST_TIMEOUT)
-	if tout != nil {
-		timeout = time.Second * time.Duration(*tout)
+	var prettyJson bytes.Buffer
+	err = json.Indent(&prettyJson, resp, "", "  ")
+	if err != nil {
+		fmt.Printf("\n%s\n\n", resp)
+		return nil
 	}
 
-	cliArgs := CliArgs{
-		Dump:       dump,
-		Env:        env,
-		Collection: coll,
-		Timeout:    &timeout,
-	}
-
-	if *cliArgs.Dump == "" {
-		cliArgs.Dump = nil
-	}
-
-	if *cliArgs.Env == "" {
-		cliArgs.Env = nil
-	}
-
-	return cliArgs
+	fmt.Printf("\n%s\n\n", prettyJson.String())
+	return nil
 }
 
 func run(args []string) error {
-	cliArgs := defaultCliArgs()
-	if len(args) > 0 {
-		if args[1] == "init" {
-			sampleCollection := collection.NewSampleCollection()
-			encoded, err := toml.Marshal(sampleCollection)
-			if err != nil {
-				return fmt.Errorf("failed to encoded sample collection: %w", err)
-			}
-
-			if err := os.WriteFile(DEFAULT_COLLECTION_FILEPATH, encoded, 0644); err != nil {
-				return fmt.Errorf("failed to write sample collection file: %w", err)
-			}
-
-			return nil
-		} else {
-			cliArgs = parseFlags(args)
-		}
+	flags, err := cli.GetFlags(args)
+	if err != nil {
+		return err
 	}
 
+	// handle keyboard interrupt.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-
 	go func() {
 		_ = <-signals
 		fmt.Printf("%s\nExiting...%s\n", colors.BLACK, colors.RESET)
 		os.Exit(0)
 	}()
 
-	openedCollection, err := collection.Load(*cliArgs.Collection, *cliArgs.Env)
+	openedCollection, err := collection.Load(*flags.Collection, flags.Env)
 	if err != nil {
 		return fmt.Errorf("failed to load collection: %w", err)
 	}
@@ -121,29 +76,7 @@ func run(args []string) error {
 	}
 
 	selectedRequest := openedCollection.Requests[selection-1]
-	fmt.Printf("%sSending Request %s", colors.BLUE, colors.RESET)
-
-	start := time.Now()
-	resp, statusCode, err := selectedRequest.Do(
-		collection.RequestArgs{
-			Timeout: *cliArgs.Timeout,
-		},
-	)
-
-	elapsed := time.Since(start)
-	fmt.Print("\033[2J\033[H") // clear screen and move cursor to start.
-	fmt.Printf("%sStatus = %s%d\t%sElapsed = %s%s\n%s", colors.BLACK, colors.YELLOW,
-		statusCode, colors.BLACK, colors.YELLOW, elapsed, colors.RESET)
-
-	var prettyJson bytes.Buffer
-	err = json.Indent(&prettyJson, resp, "", "  ")
-	if err != nil {
-		fmt.Printf("\n%s\n\n", resp)
-		return nil
-	}
-
-	fmt.Printf("\n%s\n\n", prettyJson.String())
-	return nil
+	return performRequest(selectedRequest, *flags.Timeout)
 }
 
 func main() {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -70,25 +70,26 @@ func (q RequestQuery) Encode() (string, error) {
 }
 
 type RequestEntry struct {
-	Name    string         `toml:"name"`
-	Url     string         `toml:"url"`
-	Method  RequestMethod  `toml:"method"`
-	Query   RequestQuery   `toml:"query"`   // optional.
-	Headers RequestHeaders `toml:"headers"` // optional.
-	Body    any            `toml:"body"`    // optional.
+	Name    string         `yaml:"name"`
+	Url     string         `yaml:"url"`
+	Method  RequestMethod  `yaml:"method"`
+	Query   RequestQuery   `yaml:"query"`   // optional.
+	Headers RequestHeaders `yaml:"headers"` // optional.
+	Body    any            `yaml:"body"`    // optional.
+	Vars    Vars           `yaml:"vars"`    // optional.
 }
 
-func (r *RequestEntry) validateAndParseUrl(vars Vars) error {
+func (r *RequestEntry) validateAndParseUrl(collectionVars Vars) error {
 	if r.Url == "" {
 		return fmt.Errorf("request url is missing")
 	}
 
 	var err error
-	r.Url, err = replacePlaceholders(vars, r.Url, "request url")
+	r.Url, err = replacePlaceholders(r.Vars, collectionVars, r.Url, "request url")
 	return err
 }
 
-func (r *RequestEntry) validateAndParseQuery(vars Vars) error {
+func (r *RequestEntry) validateAndParseQuery(collectionVars Vars) error {
 	if r.Query == nil {
 		return nil
 	}
@@ -102,7 +103,7 @@ func (r *RequestEntry) validateAndParseQuery(vars Vars) error {
 			return nil
 
 		case string:
-			r.Query[k], err = replacePlaceholders(vars, vt, "request query")
+			r.Query[k], err = replacePlaceholders(r.Vars, collectionVars, vt, "request query")
 			if err != nil {
 				return err
 			}
@@ -115,14 +116,14 @@ func (r *RequestEntry) validateAndParseQuery(vars Vars) error {
 	return nil
 }
 
-func (r *RequestEntry) validateAndParseHeaders(vars Vars) error {
+func (r *RequestEntry) validateAndParseHeaders(collectionVars Vars) error {
 	if r.Headers == nil {
 		return nil
 	}
 
 	var err error
 	for k, v := range r.Headers {
-		r.Headers[k], err = replacePlaceholders(vars, v, "request header")
+		r.Headers[k], err = replacePlaceholders(r.Vars, collectionVars, v, "request header")
 		if err != nil {
 			return err
 		}
@@ -131,41 +132,41 @@ func (r *RequestEntry) validateAndParseHeaders(vars Vars) error {
 	return nil
 }
 
-func (r *RequestEntry) validateAndParseBody(vars Vars) error {
+func (r *RequestEntry) validateAndParseBody(collectionVars Vars) error {
 	switch t := r.Body.(type) {
 	case nil:
 		return nil
 
 	case []any:
 		for _, entry := range t {
-			if err := recursivelyParseBody(vars, entry); err != nil {
+			if err := recursivelyParseBody(r.Vars, collectionVars, entry); err != nil {
 				return err
 			}
 		}
 		return nil
 
 	case any:
-		return recursivelyParseBody(vars, t)
+		return recursivelyParseBody(r.Vars, collectionVars, t)
 
 	default:
 		return fmt.Errorf("only array and object types are supported for body")
 	}
 }
 
-func recursivelyParseBody(vars Vars, body any) error {
+func recursivelyParseBody(collectionVars Vars, requestVars Vars, body any) error {
 	var err error
 	switch t := body.(type) {
 	case map[string]any:
 		for k, v := range t {
 			switch vt := v.(type) {
 			case string:
-				t[k], err = replacePlaceholders(vars, vt, "body value")
+				t[k], err = replacePlaceholders(collectionVars, requestVars, vt, "body value")
 				if err != nil {
 					return err
 				}
 
 			case map[string]any:
-				return recursivelyParseBody(vars, vt)
+				return recursivelyParseBody(collectionVars, requestVars, vt)
 			}
 		}
 
@@ -174,6 +175,20 @@ func recursivelyParseBody(vars Vars, body any) error {
 	}
 
 	return nil
+}
+
+func (r *RequestEntry) getVar(key string) (*string, bool) {
+	if r.Vars == nil {
+		return nil, false
+	}
+
+	for k, v := range r.Vars {
+		if k == key {
+			return &v, true
+		}
+	}
+
+	return nil, false
 }
 
 func (r *RequestEntry) validate(vars Vars) error {
@@ -263,8 +278,8 @@ func (r *RequestEntry) Do(args RequestArgs) ([]byte, int, error) {
 }
 
 type Collection struct {
-	Vars     Vars            `toml:"vars"` // optional.
-	Requests []*RequestEntry `toml:"requests"`
+	Vars     Vars            `yaml:"vars"` // optional.
+	Requests []*RequestEntry `yaml:"requests"`
 }
 
 func (c *Collection) validate() error {
@@ -289,20 +304,35 @@ func fileExists(filename string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func Load(filepath string, envFilepath string) (*Collection, error) {
+func Load(filepath string, envFilepath *string) (*Collection, error) {
 	if !fileExists(filepath) {
 		return nil, fmt.Errorf("collection file %q not found", filepath)
 	}
 
-	if fileExists(envFilepath) {
-		err := godotenv.Load(envFilepath)
+	if envFilepath != nil && fileExists(*envFilepath) {
+		err := godotenv.Load(*envFilepath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load environment file %q: %w", envFilepath, err)
+			return nil, fmt.Errorf("failed to load environment file %q: %w", *envFilepath, err)
 		}
 	}
 
+	defaultEnvFile := ".env"
+	if envFilepath == nil && fileExists(defaultEnvFile) {
+		envFilepath = &defaultEnvFile
+	}
+
+	err := godotenv.Load(*envFilepath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load environment file %q: %w", *envFilepath, err)
+	}
+
+	filecontent, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read collection file: %w", err)
+	}
+
 	var collection Collection
-	if _, err := toml.DecodeFile(filepath, &collection); err != nil {
+	if err := yaml.Unmarshal(filecontent, &collection); err != nil {
 		return nil, fmt.Errorf("invalid contents in collection: %w", err)
 	}
 
@@ -367,7 +397,7 @@ func extractPlaceholders(template string) []string {
 	return placeholders
 }
 
-func replacePlaceholders(vars Vars, target string, targetName string) (string, error) {
+func replacePlaceholders(collectionVars Vars, requestVars Vars, target string, targetName string) (string, error) {
 	placeholders := extractPlaceholders(target)
 	if len(placeholders) == 0 {
 		return target, nil
@@ -375,18 +405,29 @@ func replacePlaceholders(vars Vars, target string, targetName string) (string, e
 
 	result := target
 	for _, p := range placeholders {
-		value, ok := vars[p]
+		// priority one: lookup in request vars.
+		if requestVars != nil {
+			value, ok := requestVars[p]
+			if ok {
+				result = strings.ReplaceAll(result, fmt.Sprintf("{%s}", p), value)
+				continue
+			}
+		}
+
+		// priority one: lookup in collection vars.
+		value, ok := collectionVars[p]
 		if ok {
 			result = strings.ReplaceAll(result, fmt.Sprintf("{%s}", p), value)
 			continue
-		} else {
-			// if placeholder is not found in collection, we look it up in env.
-			envValue := os.Getenv(p)
-			if envValue == "" {
-				return "", fmt.Errorf("undefined placeholder in %s: %s", targetName, p)
-			}
+		}
+
+		// priority three: lookup in env vars.
+		envValue := os.Getenv(p)
+		if envValue != "" {
 			result = strings.ReplaceAll(result, fmt.Sprintf("{%s}", p), envValue)
 		}
+
+		return "", fmt.Errorf("undefined placeholder in %s: %s", targetName, p)
 	}
 
 	return result, nil
