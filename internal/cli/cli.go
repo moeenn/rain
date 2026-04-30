@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"rain/internal/collection"
+	"rain/internal/colors"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -72,27 +73,29 @@ func dumpDefaultCollection() error {
 		return fmt.Errorf("failed to encoded sample collection: %w", err)
 	}
 
-	if err := os.WriteFile(defaultCollectionFilepath, encoded, 0644); err != nil {
+	if err := os.WriteFile(defaultCollectionFilepath, encoded, 0600); err != nil {
 		return fmt.Errorf("failed to write sample collection file: %w", err)
 	}
 
 	return nil
 }
 
-func GetFlags(args []string) (*CliArgs, error) {
+func GetFlags(args []string) (*CliArgs, bool, error) {
 	cliArgs := defaultCliArgs()
 	if len(args) > 1 {
 		command := args[1]
 		switch command {
 		case "init":
+			fmt.Printf("%sCreating default config%s\n", colors.BLUE, colors.RESET)
 			if err := dumpDefaultCollection(); err != nil {
-				return nil, err
+				return nil, true, err
 			}
+			return nil, true, nil
 
 		default:
 			cliArgs = parseFlags()
 		}
 	}
 
-	return &cliArgs, nil
+	return &cliArgs, false, nil
 }

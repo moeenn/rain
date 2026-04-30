@@ -15,7 +15,6 @@ import (
 
 func performRequest(selectedRequest *collection.RequestEntry, timeout time.Duration) error {
 	fmt.Printf("%sSending Request %s", colors.BLUE, colors.RESET)
-
 	start := time.Now()
 	resp, statusCode, err := selectedRequest.Do(
 		collection.RequestArgs{
@@ -23,10 +22,14 @@ func performRequest(selectedRequest *collection.RequestEntry, timeout time.Durat
 		},
 	)
 
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+
 	elapsed := time.Since(start)
 	fmt.Print("\033[2J\033[H") // clear screen and move cursor to start.
-	fmt.Printf("%sStatus = %s%d\t%sElapsed = %s%s\n%s", colors.BLACK, colors.YELLOW,
-		statusCode, colors.BLACK, colors.YELLOW, elapsed, colors.RESET)
+	fmt.Printf("%sStatus = %d\tElapsed = %s\n%s", colors.YELLOW,
+		statusCode, elapsed, colors.RESET)
 
 	var prettyJson bytes.Buffer
 	err = json.Indent(&prettyJson, resp, "", "  ")
@@ -40,16 +43,20 @@ func performRequest(selectedRequest *collection.RequestEntry, timeout time.Durat
 }
 
 func run(args []string) error {
-	flags, err := cli.GetFlags(args)
+	flags, done, err := cli.GetFlags(args)
 	if err != nil {
 		return err
+	}
+
+	if done {
+		return nil
 	}
 
 	// handle keyboard interrupt.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		_ = <-signals
+		<-signals
 		fmt.Printf("%s\nExiting...%s\n", colors.BLACK, colors.RESET)
 		os.Exit(0)
 	}()

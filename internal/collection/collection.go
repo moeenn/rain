@@ -177,19 +177,20 @@ func recursivelyParseBody(collectionVars Vars, requestVars Vars, body any) error
 	return nil
 }
 
-func (r *RequestEntry) getVar(key string) (*string, bool) {
-	if r.Vars == nil {
-		return nil, false
-	}
+// TODO: see if required.
+// func (r *RequestEntry) getVar(key string) (*string, bool) {
+// 	if r.Vars == nil {
+// 		return nil, false
+// 	}
 
-	for k, v := range r.Vars {
-		if k == key {
-			return &v, true
-		}
-	}
+// 	for k, v := range r.Vars {
+// 		if k == key {
+// 			return &v, true
+// 		}
+// 	}
 
-	return nil, false
-}
+// 	return nil, false
+// }
 
 func (r *RequestEntry) validate(vars Vars) error {
 	if r.Name == "" {
@@ -258,6 +259,7 @@ func (r *RequestEntry) Do(args RequestArgs) ([]byte, int, error) {
 		}
 	}
 
+	//nolint:exhaustruct
 	client := &http.Client{
 		Timeout: args.Timeout,
 	}
@@ -266,6 +268,7 @@ func (r *RequestEntry) Do(args RequestArgs) ([]byte, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to complete request: %w", err)
 	}
+	//nolint:errcheck
 	defer resp.Body.Close()
 
 	parsedBody, err := io.ReadAll(resp.Body)
@@ -316,14 +319,21 @@ func Load(filepath string, envFilepath *string) (*Collection, error) {
 		}
 	}
 
-	defaultEnvFile := ".env"
-	if envFilepath == nil && fileExists(defaultEnvFile) {
-		envFilepath = &defaultEnvFile
-	}
+	if envFilepath != nil {
+		if !fileExists(*envFilepath) {
+			return nil, fmt.Errorf("the provided env file %q does not exist", *envFilepath)
+		}
 
-	err := godotenv.Load(*envFilepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load environment file %q: %w", *envFilepath, err)
+		if err := godotenv.Load(*envFilepath); err != nil {
+			return nil, fmt.Errorf("failed to load environment file %q: %w", *envFilepath, err)
+		}
+	} else {
+		defaultEnvFile := ".env"
+		if fileExists(defaultEnvFile) {
+			if err := godotenv.Load(defaultEnvFile); err != nil {
+				return nil, fmt.Errorf("failed to load environment file %q: %w", *envFilepath, err)
+			}
+		}
 	}
 
 	filecontent, err := os.ReadFile(filepath)
@@ -425,6 +435,7 @@ func replacePlaceholders(collectionVars Vars, requestVars Vars, target string, t
 		envValue := os.Getenv(p)
 		if envValue != "" {
 			result = strings.ReplaceAll(result, fmt.Sprintf("{%s}", p), envValue)
+			continue
 		}
 
 		return "", fmt.Errorf("undefined placeholder in %s: %s", targetName, p)
